@@ -27,21 +27,31 @@ class TestMancalaGameLogic(unittest.TestCase):
 
     def test_capture_mechanic(self):
         # Set up a scenario where a capture should occur
-        self.game.board = [0, 0, 0, 1, 0, 0, 0, 8, 8, 8, 8, 8, 7, 0]
+        self.game.board = [3, 0, 0, 1, 0, 0, 0, 5, 8, 8, 8, 8, 7, 0]
         self.game.current_player = 1
         self.game.make_move(3)
         # Player 1 should capture stones from pit 9
-        expected_board = [0, 0, 0, 0, 1, 0, 8, 8, 8, 8, 8, 0, 7, 0]
+        expected_board = [3, 0, 0, 0, 0,0, 9, 5, 8, 8, 8, 0, 7, 0]
+        self.assertEqual(self.game.check_game_over(), False)
         self.assertEqual(self.game.board, expected_board)
-        self.assertEqual(self.game.board[6], 8)  # Mancala store updated
+        self.assertEqual(self.game.board[6], 9)  # Mancala store updated
 
     def test_extra_turn(self):
-        # Player 1 makes a move that ends in their Mancala
+        # player 1 makes a move that ends in their mancala
         self.game.board = [4, 4, 4, 4, 4, 1, 3, 4, 4, 4, 4, 4, 4, 0]
         self.game.current_player = 1
         _, game_over = self.game.make_move(5)
-        # Player 1 should get an extra turn
+        # player 1 should get an extra turn
         self.assertEqual(self.game.current_player, 1)
+        self.assertFalse(game_over)
+
+    def test_extra_turn_2(self):
+        # player 1 makes a move that ends in their mancala
+        self.game.board = [4, 4, 4, 4, 4, 1, 3, 4, 4, 4, 4, 4, 4, 0]
+        self.game.current_player = 2
+        _, game_over = self.game.make_move(9)
+        # player 1 should get an extra turn
+        self.assertEqual(self.game.current_player, 2)
         self.assertFalse(game_over)
 
     def test_game_over_detection(self):
@@ -55,6 +65,19 @@ class TestMancalaGameLogic(unittest.TestCase):
         for i in range(14):
             if i not in [6, 13]:
                 self.assertEqual(self.game.board[i], 0)
+
+    def test_game_over_detection_2(self):
+        # Empty one side of the board to trigger game over
+        self.game.board = [4, 4, 4, 4, 4, 4, 0,0,0,0,0,0,0,24]
+        self.game.current_player = 2
+        self.game.check_game_over()
+        self.assertTrue(self.game.game_over)
+        # Remaining stones should be collected
+        self.assertEqual(self.game.board[13], 24)
+        for i in range(14):
+            if i not in [6, 13]:
+                self.assertEqual(self.game.board[i], 0)
+
 
     def test_invalid_move(self):
         # Attempt to make a move from an empty pit
@@ -77,13 +100,13 @@ class TestRLAgent(unittest.TestCase):
     def test_reward_function_win(self):
         self.game.board[6] = 25  # Player 1's Mancala
         self.game.board[13] = 23  # Player 2's Mancala
-        reward = calculate_reward(self.game, True, player=1)
+        reward = calculate_reward(self.game, True, ai_player=1)
         self.assertEqual(reward, 10)
 
     def test_reward_function_loss(self):
         self.game.board[6] = 20
         self.game.board[13] = 30
-        reward = calculate_reward(self.game, True, player=1)
+        reward = calculate_reward(self.game, True, ai_player=1)
         self.assertEqual(reward, -10)
 
     def test_choose_move(self):

@@ -50,13 +50,13 @@ class MancalaGame:
 
     def handle_capture(self, index):
         if self.current_player == 1 and 0 <= index <= 5 and self.board[index] == 1:
-            opposite_index = 12 - index
+            opposite_index = (index + 7) % 14
             if self.board[opposite_index] > 0:
                 self.board[6] += self.board[opposite_index] + 1
-                self.board[index] = 0
+                self.board[index] = 0 # TODO: Make this our own version where we don't capture the last stone
                 self.board[opposite_index] = 0
         elif self.current_player == 2 and 7 <= index <= 12 and self.board[index] == 1:
-            opposite_index = 12 - index
+            opposite_index = (index + 7) % 14
             if self.board[opposite_index] > 0:
                 self.board[13] += self.board[opposite_index] + 1
                 self.board[index] = 0
@@ -69,6 +69,8 @@ class MancalaGame:
         if sum(self.board[0:6]) == 0 or sum(self.board[7:13]) == 0:
             self.game_over = True
             self.collect_remaining_stones()
+            return True
+        return False
 
     def collect_remaining_stones(self):
         self.board[6] += sum(self.board[0:6])
@@ -213,16 +215,23 @@ class GAAgent(Player):
 # Helper Functions
 # -----------------------------
 
-def calculate_reward(game, game_over, player):
+def calculate_reward(game, game_over, ai_player=1):
+    ai_mancala = 6 if ai_player == 1 else 13
+    opponent_mancala = 13 if ai_player == 1 else 6
+
     if game_over:
-        if game.board[6] > game.board[13]:
-            return 10 if player == 1 else -10
-        elif game.board[6] < game.board[13]:
-            return -10 if player == 1 else 10
-        else:
+        if game.board[ai_mancala] > game.board[opponent_mancala]:  # AI wins
+            return 10
+        elif game.board[ai_mancala] < game.board[opponent_mancala]:  # Opponent wins
+            return -10
+        else:  # Draw
             return 0
     else:
-        return (game.board[6] - game.board[13]) / sum(game.board)
+        # Provide intermediate reward based on Mancala difference
+        total_stones = sum(game.board)
+        if total_stones == 0:  # Prevent division by zero
+            return 0
+        return (game.board[ai_mancala] - game.board[opponent_mancala]) / total_stones
 
 # -----------------------------
 # Training Functions
@@ -238,19 +247,21 @@ def train_rl_agent(num_episodes=1000):
         while not game.game_over:
             if game.current_player == 1:
                 action = agent.choose_move(game)
-                player = 1
+                player = 1# After the last line, game.current_player will change, so use player instead
             else:
                 action = opponent.choose_move(game)
                 player = 2
             next_state, game_over = game.make_move(action)
-            reward = calculate_reward(game, game_over, player)
+            reward = calculate_reward(game, game_over)
             done = float(game_over)
-            agent.memory.push(state, action, reward, next_state, done)
+            if player == 1:  # Only store AI's transitions
+                agent.memory.push(state, action, reward, next_state, done)
             agent.optimize_model()
             state = next_state
         agent.update_epsilon()
         if episode % 10 == 0:
             agent.update_target_net()
+
     return agent
 
 def evolve_population(population_size=50, generations=100, mutation_rate=0.1):
