@@ -24,6 +24,7 @@ class MancalaGame:
         self.board = [self.stones_per_pit]*6 + [0] + [self.stones_per_pit]*6 + [0]
         self.current_player = 1  # Player 1 starts
         self.game_over = False
+        self.last_board_snapshot = self.board.copy()
 
     def get_legal_moves(self):
         # Return indices of non-empty pits for the current player
@@ -65,6 +66,9 @@ class MancalaGame:
 
     def is_extra_turn(self, index):
         return (self.current_player == 1 and index == 6) or (self.current_player == 2 and index == 13)
+
+    def update_last_board_snapshot(self):
+        self.last_board_snapshot = self.board.copy()
 
     def check_game_over(self):
         if sum(self.board[0:6]) == 0 or sum(self.board[7:13]) == 0:
@@ -133,7 +137,9 @@ class ReplayMemory:
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+        # return random.sample(self.memory, batch_size)
+        # instead, pop the last elements in reverse order
+        return [self.memory[i] for i in range(len(self.memory)-1, len(self.memory)-batch_size-1, -1)]
 
     def __len__(self):
         return len(self.memory)
@@ -158,13 +164,13 @@ class RLAgent(Player):
         self.target_net = DQN(self.state_size, self.action_size)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.0001)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.000002)
         self.memory = ReplayMemory()
         self.steps_done = 0
         self.epsilon = 1.0  # Exploration rate
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9998
-        self.gamma = 0.9  # Discount factor
+        self.gamma = 0.8  # Discount factor
         # print a message for all the constants
         print(f"state_size: {self.state_size}")
         print(f"action_size: {self.action_size}")
@@ -193,21 +199,21 @@ class RLAgent(Player):
             return
         transitions = self.memory.sample(batch_size)
         batch = Transition(*zip(*transitions))
+        for i in range(batch_size):
+            state_batch = torch.FloatTensor(batch.state)
+            action_batch = torch.LongTensor(batch.action).unsqueeze(1)
+            reward_batch = torch.FloatTensor(batch.reward)
+            next_state_batch = torch.FloatTensor(batch.next_state)
+            done_batch = torch.FloatTensor(batch.done)
 
-        state_batch = torch.FloatTensor(batch.state)
-        action_batch = torch.LongTensor(batch.action).unsqueeze(1)
-        reward_batch = torch.FloatTensor(batch.reward)
-        next_state_batch = torch.FloatTensor(batch.next_state)
-        done_batch = torch.FloatTensor(batch.done)
+            q_values = self.policy_net(state_batch).gather(1, action_batch)
+            next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
+            expected_q_values = reward_batch + (self.gamma * next_q_values * (1 - done_batch))
 
-        q_values = self.policy_net(state_batch).gather(1, action_batch)
-        next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
-        expected_q_values = reward_batch + (self.gamma * next_q_values * (1 - done_batch))
-
-        loss = nn.functional.mse_loss(q_values.squeeze(), expected_q_values)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+            loss = nn.functional.mse_loss(q_values.squeeze(), expected_q_values)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
     def update_epsilon(self):
 
@@ -282,6 +288,24 @@ class DRLAgent(RLAgent):
 # -----------------------------
 # Helper Functions
 # -----------------------------
+def calculate_delta_reward(game, game_over, ai_player=1):
+    # use game.last_board_snapshot and game.board to calculate the delta reward
+    ai_mancala = 6 if ai_player == 1 else 13
+    opponent_mancala = 13 if ai_player == 1 else 6
+    if game_over:
+        if game.board[ai_mancala] > game.board[opponent_mancala]:
+            return 10
+        elif game.board[ai_mancala] < game.board[opponent_mancala]:
+            return -10
+        else:
+            return 0
+    else:
+        # Provide intermediate reward based on Mancala difference
+        total_stones = sum(game.board)
+        assert total_stones == 48   # total stones in the game
+        delta_stones = game.board[ai_mancala] - game.last_board_snapshot[ai_mancala] + game.last_board_snapshot[opponent_mancala] - game.board[opponent_mancala]
+        game.update_last_board_snapshot()
+        return (delta_stones) / total_stones * 4
 
 def calculate_reward(game, game_over, ai_player=1):
     ai_mancala = 6 if ai_player == 1 else 13
@@ -329,7 +353,7 @@ def evaluate_win_rate(agent, num_games=10000):
 # -----------------------------
 
 def train_rl_agent(num_episodes=10000, eval_interval=500):
-    agent = DRLAgent(action_size=6)
+    agent = RLAgent(action_size=6)
     opponent = RandomPlayer()
     win_rates = []
 
@@ -357,14 +381,19 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
         # Evaluate win rate every eval_interval episodes
         if (episode + 1) % eval_interval == 0:
             print(f"Evaluating at Episode {episode + 1}...")
-            win_rate = evaluate_win_rate(agent, num_games=10000)
+            win_rate = evaluate_win_rate(agent, num_games=1000)
             win_rates.append((episode + 1, win_rate))
+            if ((episode + 1) // eval_interval) % 10 == 0:
+                class_name = agent.__class__.__name__
+                final_win_rate = evaluate_win_rate(agent, num_games=100000)
+                model_name = f"{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_epoch{episode}_winrate{final_win_rate}.pth"
+                agent.save_model(f"saved_models/{model_name}")
 
     print("Evaluating Final RL Agent...")
     final_win_rate = evaluate_win_rate(agent, num_games=100000)
     # Save the model after training
     class_name = agent.__class__.__name__
-    model_name = f"{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
+    model_name = f"Final-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
     agent.save_model(f"saved_models/{model_name}")
     return agent, win_rates
 
@@ -374,7 +403,7 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
 
 if __name__ == "__main__":
     # make torch deterministic
-    torch.manual_seed(1)
+    torch.manual_seed(40)
 
     print("Mancala Game Simulator")
 
@@ -384,7 +413,7 @@ if __name__ == "__main__":
 
     # Train the Reinforcement Learning Agent
     print("Training Reinforcement Learning Agent...")
-    rl_agent, win_rates = train_rl_agent(num_episodes=20000)
+    rl_agent, win_rates = train_rl_agent(num_episodes=20000000)
     print("RL Agent Training Completed.")
 
 
