@@ -137,9 +137,7 @@ class ReplayMemory:
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
-        # return random.sample(self.memory, batch_size)
-        # instead, pop the last elements in reverse order
-        return [self.memory[i] for i in range(len(self.memory)-1, len(self.memory)-batch_size-1, -1)]
+        return random.sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
@@ -164,10 +162,10 @@ class RLAgent(Player):
         self.target_net = DQN(self.state_size, self.action_size)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.000002)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.00002)
         self.memory = ReplayMemory()
         self.steps_done = 0
-        self.epsilon = 1.0  # Exploration rate
+        self.epsilon = 1.0  # Exploration rate TODO: make this higher eg 10 to start with more exploration
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9998
         self.gamma = 0.8  # Discount factor
@@ -199,21 +197,21 @@ class RLAgent(Player):
             return
         transitions = self.memory.sample(batch_size)
         batch = Transition(*zip(*transitions))
-        for i in range(batch_size):
-            state_batch = torch.FloatTensor(batch.state)
-            action_batch = torch.LongTensor(batch.action).unsqueeze(1)
-            reward_batch = torch.FloatTensor(batch.reward)
-            next_state_batch = torch.FloatTensor(batch.next_state)
-            done_batch = torch.FloatTensor(batch.done)
 
-            q_values = self.policy_net(state_batch).gather(1, action_batch)
-            next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
-            expected_q_values = reward_batch + (self.gamma * next_q_values * (1 - done_batch))
+        state_batch = torch.FloatTensor(batch.state)
+        action_batch = torch.LongTensor(batch.action).unsqueeze(1)
+        reward_batch = torch.FloatTensor(batch.reward)
+        next_state_batch = torch.FloatTensor(batch.next_state)
+        done_batch = torch.FloatTensor(batch.done)
 
-            loss = nn.functional.mse_loss(q_values.squeeze(), expected_q_values)
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        q_values = self.policy_net(state_batch).gather(1, action_batch)
+        next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
+        expected_q_values = reward_batch + (self.gamma * next_q_values * (1 - done_batch))
+
+        loss = nn.functional.mse_loss(q_values.squeeze(), expected_q_values)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
     def update_epsilon(self):
 
@@ -246,6 +244,7 @@ class RLAgent(Player):
 class DDQN(nn.Module):
     def __init__(self, state_size, action_size):
         super(DDQN, self).__init__()
+        self.hidden_size = 128
         self.fc1 = nn.Linear(state_size, 128)  # Increased the number of neurons for a larger network
         self.fc2 = nn.Linear(128, 128)        # Added more depth
         self.fc3 = nn.Linear(128, 128)        # New layer
@@ -272,7 +271,7 @@ class DRLAgent(RLAgent):
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.0001)
         self.memory = ReplayMemory()
         self.steps_done = 0
-        self.epsilon = 1.0
+        self.epsilon = 5
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9998
         self.gamma = 0.8
@@ -302,7 +301,7 @@ def calculate_delta_reward(game, game_over, ai_player=1):
     else:
         # Provide intermediate reward based on Mancala difference
         total_stones = sum(game.board)
-        assert total_stones == 48   # total stones in the game
+        assert total_stones == 48
         delta_stones = game.board[ai_mancala] - game.last_board_snapshot[ai_mancala] + game.last_board_snapshot[opponent_mancala] - game.board[opponent_mancala]
         game.update_last_board_snapshot()
         return (delta_stones) / total_stones * 4
@@ -353,7 +352,7 @@ def evaluate_win_rate(agent, num_games=10000):
 # -----------------------------
 
 def train_rl_agent(num_episodes=10000, eval_interval=500):
-    agent = RLAgent(action_size=6)
+    agent = DRLAgent(action_size=6)
     opponent = RandomPlayer()
     win_rates = []
 
@@ -368,7 +367,7 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
                 action = opponent.choose_move(game)
                 player = 2
             next_state, game_over = game.make_move(action)
-            reward = calculate_reward(game, game_over)
+            reward = calculate_delta_reward(game,game_over) #calculate_reward(game, game_over)
             done = float(game_over)
             if player == 1:  # Only store AI's transitions
                 agent.memory.push(state, action, reward, next_state, done)
@@ -386,14 +385,14 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
             if ((episode + 1) // eval_interval) % 10 == 0:
                 class_name = agent.__class__.__name__
                 final_win_rate = evaluate_win_rate(agent, num_games=100000)
-                model_name = f"{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_epoch{episode}_winrate{final_win_rate}.pth"
+                model_name = f"delta-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_epoch{episode}_winrate{final_win_rate}.pth"
                 agent.save_model(f"saved_models/{model_name}")
 
     print("Evaluating Final RL Agent...")
     final_win_rate = evaluate_win_rate(agent, num_games=100000)
     # Save the model after training
     class_name = agent.__class__.__name__
-    model_name = f"Final-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
+    model_name = f"delta-Final-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
     agent.save_model(f"saved_models/{model_name}")
     return agent, win_rates
 
@@ -403,7 +402,7 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
 
 if __name__ == "__main__":
     # make torch deterministic
-    torch.manual_seed(40)
+    torch.manual_seed(47)
 
     print("Mancala Game Simulator")
 
