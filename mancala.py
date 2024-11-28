@@ -1,4 +1,5 @@
 # mancala.py
+import os
 
 import numpy as np
 import random
@@ -50,13 +51,13 @@ class MancalaGame:
 
     def handle_capture(self, index):
         if self.current_player == 1 and 0 <= index <= 5 and self.board[index] == 1:
-            opposite_index = (index + 7) % 14
+            opposite_index = 12 - index
             if self.board[opposite_index] > 0:
                 self.board[6] += self.board[opposite_index] + 1
                 self.board[index] = 0 # TODO: Make this our own version where we don't capture the last stone
                 self.board[opposite_index] = 0
         elif self.current_player == 2 and 7 <= index <= 12 and self.board[index] == 1:
-            opposite_index = (index + 7) % 14
+            opposite_index = 12 - index
             if self.board[opposite_index] > 0:
                 self.board[13] += self.board[opposite_index] + 1
                 self.board[index] = 0
@@ -78,6 +79,17 @@ class MancalaGame:
         for i in range(14):
             if i != 6 and i != 13:
                 self.board[i] = 0
+
+    def check_winner(self):
+        if self.game_over:
+            if self.board[6] > self.board[13]:
+                return 1
+            elif self.board[6] < self.board[13]:
+                return 2
+            else:
+                return 0
+        else:
+            raise ValueError("Game is not over yet.")
 
     def get_state(self):
         # Returns the current game state as a numpy array
@@ -114,7 +126,7 @@ class RandomPlayer(Player):
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
 class ReplayMemory:
-    def __init__(self, capacity=10000):
+    def __init__(self, capacity=50000):
         self.memory = deque(maxlen=capacity)
 
     def push(self, *args):
@@ -127,17 +139,17 @@ class ReplayMemory:
         return len(self.memory)
 
 class DQN(nn.Module):
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, hidden_size=64):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(state_size, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.out = nn.Linear(64, action_size)
+        self.hidden_size = hidden_size
+        self.fc1 = nn.Linear(state_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.out = nn.Linear(hidden_size, action_size)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.out(x)
-
 class RLAgent(Player):
     def __init__(self, action_size=6):
         self.state_size = 14 + 1  # Board state + current player
@@ -146,13 +158,21 @@ class RLAgent(Player):
         self.target_net = DQN(self.state_size, self.action_size)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters())
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.0001)
         self.memory = ReplayMemory()
         self.steps_done = 0
         self.epsilon = 1.0  # Exploration rate
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995
-        self.gamma = 0.99  # Discount factor
+        self.epsilon_decay = 0.9998
+        self.gamma = 0.9  # Discount factor
+        # print a message for all the constants
+        print(f"state_size: {self.state_size}")
+        print(f"action_size: {self.action_size}")
+        print(f"epsilon: {self.epsilon}")
+        print(f"epsilon_min: {self.epsilon_min}")
+        print(f"epsilon_decay: {self.epsilon_decay}")
+        print(f"gamma: {self.gamma}")
+
 
     def choose_move(self, game):
         state = torch.FloatTensor(game.get_state())
@@ -190,26 +210,74 @@ class RLAgent(Player):
         self.optimizer.step()
 
     def update_epsilon(self):
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+        new_epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        if (self.epsilon>0.5 and new_epsilon<=0.5):
+            print("Epsilon has reached 0.5")
+        elif (self.epsilon>0.3 and new_epsilon<=0.3):
+            print("Epsilon has reached 0.3")
+        elif (self.epsilon>0.1 and new_epsilon<=0.1):
+            print("Epsilon has reached 0.1")
+        self.epsilon = new_epsilon
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-# -----------------------------
-# Genetic Algorithm Components
-# -----------------------------
+    def save_model(self, filepath="rl_agent.pth"):
+        """Saves the RL agent's policy network to a file."""
+        torch.save(self.policy_net.state_dict(), filepath)
+        print(f"Model saved to {filepath}.")
 
-class GAAgent(Player):
-    def __init__(self, weights=None):
-        if weights is None:
-            self.weights = np.random.rand(6)
+    def load_model(self, filepath="rl_agent.pth"):
+        """Loads the RL agent's policy network from a file."""
+        if os.path.exists(filepath):
+            self.policy_net.load_state_dict(torch.load(filepath))
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+            print(f"Model loaded from {filepath}.")
         else:
-            self.weights = weights
+            print(f"No model found at {filepath}. Starting with a fresh model.")
 
-    def choose_move(self, game):
-        legal_moves = game.get_legal_moves()
-        move_scores = {i: self.weights[i%6] for i in legal_moves}
-        return max(move_scores, key=move_scores.get)
+class DDQN(nn.Module):
+    def __init__(self, state_size, action_size):
+        super(DDQN, self).__init__()
+        self.fc1 = nn.Linear(state_size, 128)  # Increased the number of neurons for a larger network
+        self.fc2 = nn.Linear(128, 128)        # Added more depth
+        self.fc3 = nn.Linear(128, 128)        # New layer
+        self.fc4 = nn.Linear(128, 64)         # Added one more layer before output
+        self.out = nn.Linear(64, action_size)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc4(x))
+        return self.out(x)
+
+
+class DRLAgent(RLAgent):
+    # use DDQN instead of DQN
+    def __init__(self, action_size=6):
+        self.state_size = 14 + 1
+        self.action_size = action_size
+        self.policy_net = DDQN(self.state_size, self.action_size)
+        self.target_net = DDQN(self.state_size, self.action_size)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.0001)
+        self.memory = ReplayMemory()
+        self.steps_done = 0
+        self.epsilon = 1.0
+        self.epsilon_min = 0.05
+        self.epsilon_decay = 0.9998
+        self.gamma = 0.8
+        # print a message for all the constants
+        print(f"state_size: {self.state_size}")
+        print(f"action_size: {self.action_size}")
+        print(f"epsilon: {self.epsilon}")
+        print(f"epsilon_min: {self.epsilon_min}")
+        print(f"epsilon_decay: {self.epsilon_decay}")
+        print(f"gamma: {self.gamma}")
+
 
 # -----------------------------
 # Helper Functions
@@ -232,14 +300,38 @@ def calculate_reward(game, game_over, ai_player=1):
         if total_stones == 0:  # Prevent division by zero
             return 0
         return (game.board[ai_mancala] - game.board[opponent_mancala]) / total_stones
+def evaluate_win_rate(agent, num_games=10000):
+    """Evaluates the win rate of the RL agent against a RandomPlayer."""
+    wins = 0
+    draws = 0
+    losses = 0
+    for _ in range(num_games):
+        game = MancalaGame()
+        random_player = RandomPlayer()
+        while not game.game_over:
+            if game.current_player == 1:
+                action = agent.choose_move(game)
+            else:
+                action = random_player.choose_move(game)
+            game.make_move(action)
+        if game.check_winner() == 1:
+            wins += 1
+        elif game.check_winner() == 2:
+            losses += 1
+        else:
+            draws += 1
+    win_rate = wins / num_games
+    print(f"Win Rate: {win_rate:.2%}, Draws: {draws/num_games:.2%}, Losses: {losses/num_games:.2%}")
+    return win_rate
 
 # -----------------------------
 # Training Functions
 # -----------------------------
 
-def train_rl_agent(num_episodes=1000):
-    agent = RLAgent(action_size=6)
+def train_rl_agent(num_episodes=10000, eval_interval=500):
+    agent = DRLAgent(action_size=6)
     opponent = RandomPlayer()
+    win_rates = []
 
     for episode in range(num_episodes):
         game = MancalaGame()
@@ -247,7 +339,7 @@ def train_rl_agent(num_episodes=1000):
         while not game.game_over:
             if game.current_player == 1:
                 action = agent.choose_move(game)
-                player = 1# After the last line, game.current_player will change, so use player instead
+                player = 1  # After the last line, game.current_player will change, so use player instead
             else:
                 action = opponent.choose_move(game)
                 player = 2
@@ -262,67 +354,57 @@ def train_rl_agent(num_episodes=1000):
         if episode % 10 == 0:
             agent.update_target_net()
 
-    return agent
+        # Evaluate win rate every eval_interval episodes
+        if (episode + 1) % eval_interval == 0:
+            print(f"Evaluating at Episode {episode + 1}...")
+            win_rate = evaluate_win_rate(agent, num_games=10000)
+            win_rates.append((episode + 1, win_rate))
 
-def evolve_population(population_size=50, generations=100, mutation_rate=0.1):
-    population = [GAAgent() for _ in range(population_size)]
-    for generation in range(generations):
-        fitnesses = [fitness(agent, population) for agent in population]
-        total_fitness = sum(fitnesses)
-        selection_probs = [f / total_fitness for f in fitnesses]
-        selected_indices = np.random.choice(len(population), size=len(population), p=selection_probs)
-        selected_agents = [population[i] for i in selected_indices]
-        next_generation = []
-        for i in range(0, population_size, 2):
-            parent1 = selected_agents[i]
-            parent2 = selected_agents[(i+1)%population_size]
-            child1 = crossover(parent1, parent2)
-            child2 = crossover(parent2, parent1)
-            next_generation.extend([mutate(child1, mutation_rate), mutate(child2, mutation_rate)])
-        population = next_generation
-    return population
-
-# -----------------------------
-# Genetic Algorithm Functions
-# -----------------------------
-
-def fitness(agent, opponents, num_games=5):
-    score = 0
-    for _ in range(num_games):
-        opponent = random.choice(opponents)
-        game = MancalaGame()
-        while not game.game_over:
-            if game.current_player == 1:
-                action = agent.choose_move(game)
-            else:
-                action = opponent.choose_move(game)
-            game.make_move(action)
-        if game.board[6] > game.board[13]:
-            score += 1
-    return score / num_games
-
-def crossover(parent1, parent2):
-    crossover_point = random.randint(1, 5)
-    child_weights = np.concatenate((parent1.weights[:crossover_point], parent2.weights[crossover_point:]))
-    return GAAgent(weights=child_weights)
-
-def mutate(agent, mutation_rate=0.1):
-    for i in range(len(agent.weights)):
-        if random.random() < mutation_rate:
-            agent.weights[i] = np.random.rand()
-    return agent
+    print("Evaluating Final RL Agent...")
+    final_win_rate = evaluate_win_rate(agent, num_games=100000)
+    # Save the model after training
+    class_name = agent.__class__.__name__
+    model_name = f"{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
+    agent.save_model(f"saved_models/{model_name}")
+    return agent, win_rates
 
 # -----------------------------
 # Main Execution Block
 # -----------------------------
 
 if __name__ == "__main__":
+    # make torch deterministic
+    torch.manual_seed(1)
+
+    print("Mancala Game Simulator")
+
+    # Example: Evaluate the win rate of a RandomPlayer
+    print("Evaluating Random Player...")
+    evaluate_win_rate(RandomPlayer(), num_games=1000)
+
     # Train the Reinforcement Learning Agent
     print("Training Reinforcement Learning Agent...")
-    rl_agent = train_rl_agent(num_episodes=1000)
+    rl_agent, win_rates = train_rl_agent(num_episodes=20000)
     print("RL Agent Training Completed.")
 
-    # # Evolve the Genetic Algorithm Agents
-    # print("Evolving Genetic Algorithm Agents...")
-    # ga_population = evolve_population(population_size=50, generations=100, mutation_rate=0.1)
-    # print("GA Agents Evolution Completed.")
+
+
+
+    # plot win rate
+    import matplotlib.pyplot as plt
+    epochs, win_rates = zip(*win_rates)
+    plt.plot(epochs, win_rates)
+    plt.xlabel('Epoch')
+    plt.ylabel('Win Rate')
+    plt.title('RL Agent Win Rate over Training')
+    plt.show()
+
+
+    # for epoch, win_rate in win_rates:
+    #     print(f"Epoch {epoch}: Win Rate = {win_rate:.2%}")
+
+    # Example: Load and re-evaluate the model
+    # print("Loading and Evaluating Saved Model...")
+    # saved_agent = RLAgent()
+    # saved_agent.load_model()
+    # evaluate_win_rate(saved_agent, num_games=100000)
