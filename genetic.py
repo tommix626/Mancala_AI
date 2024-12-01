@@ -16,12 +16,29 @@ class MancalaNet(nn.Module):
         super(MancalaNet, self).__init__()
         self.fc1 = nn.Linear(15, 64)
         self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 64)
+        self.fc4 = nn.Linear(64, 64)
         self.out = nn.Linear(64, 6)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        return self.out(x)
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc4(x))
+        x = self.out(x)
+        return x
+
+    def choose_move(self, game):
+        state = torch.FloatTensor(game.get_state())
+        with torch.no_grad():
+            q_values = self(state)
+        legal_moves = game.get_legal_moves()
+        q_values_np = q_values.detach().numpy()
+        q_values_np = [q_values_np[i % 6] if i in legal_moves else -float('inf') for i in range(6)]
+        return legal_moves[np.argmax([q_values_np[i % 6] for i in legal_moves])]
+
+    def save(self, filepath):
+        torch.save(self.state_dict(), filepath)
 
 
 # -----------------------------
@@ -43,12 +60,13 @@ def fitness_function(ga_instance, solution, sol_idx):
         while not game.game_over:
             state = torch.FloatTensor(game.get_state())
             if game.current_player == 1:
-                with torch.no_grad():
-                    q_values = model(state)
-                legal_moves = game.get_legal_moves()
-                q_values_np = q_values.detach().numpy()
-                q_values_np = [q_values_np[i % 6] if i in legal_moves else -float('inf') for i in range(6)]
-                action = legal_moves[np.argmax([q_values_np[i % 6] for i in legal_moves])]
+                action = model.choose_move(game)
+                # with torch.no_grad():
+                #     q_values = model(state)
+                # legal_moves = game.get_legal_moves()
+                # q_values_np = q_values.detach().numpy()
+                # q_values_np = [q_values_np[i % 6] if i in legal_moves else -float('inf') for i in range(6)]
+                # action = legal_moves[np.argmax([q_values_np[i % 6] for i in legal_moves])]
             else:
                 action = opponent.choose_move(game)
             game.make_move(action)
@@ -63,29 +81,6 @@ class RandomPlayer:
         return random.choice(legal_moves)
 
 
-def evaluate_win_rate_with_weights(agent, num_games=10000):
-    """Evaluates the win rate of the agent against a RandomPlayer."""
-    wins = 0
-    draws = 0
-    losses = 0
-    for _ in range(num_games):
-        game = MancalaGame()
-        random_player = RandomPlayer()
-        while not game.game_over:
-            if game.current_player == 1:
-                action = agent.choose_move(game)
-            else:
-                action = random_player.choose_move(game)
-            game.make_move(action)
-        if game.check_winner() == 1:
-            wins += 1
-        elif game.check_winner() == 2:
-            losses += 1
-        else:
-            draws += 1
-    win_rate = wins / num_games
-    print(f"Win Rate: {win_rate:.2%}, Draws: {draws/num_games:.2%}, Losses: {losses/num_games:.2%}")
-    return win_rate
 
 # -----------------------------
 # Main Execution
@@ -99,10 +94,10 @@ if __name__ == "__main__":
     opponent = RandomPlayer()
 
     # Prepare the genetic algorithm
-    torch_ga = pygad.torchga.TorchGA(model=model, num_solutions=10)
+    torch_ga = pygad.torchga.TorchGA(model=model, num_solutions=100)
 
     ga_instance = pygad.GA(
-        num_generations=10,
+        num_generations=50,
         num_parents_mating=5,
         initial_population=torch_ga.population_weights,
         fitness_func=fitness_function,
@@ -119,4 +114,11 @@ if __name__ == "__main__":
     print("Fitness value of the best solution = {solution_fitness}".format(solution_fitness=solution_fitness))
     # Evaluate the best GA agent
     print("Evaluating the best GA Agent...")
-    evaluate_win_rate(solution, num_games=1000)
+    model_weights_dict = pygad.torchga.model_weights_as_dict(model=model, weights_vector=solution)
+    model.load_state_dict(model_weights_dict)
+    model.save("best_ga_agent.pth")
+    print("evaluating the best GA agent...")
+
+    evaluate_win_rate(model, num_games=1000)
+    evaluate_win_rate(model, num_games=10000)
+    evaluate_win_rate(model, num_games=100000)

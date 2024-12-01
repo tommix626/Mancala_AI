@@ -13,15 +13,24 @@ import torch.optim as optim
 # -----------------------------
 # Mancala Game Simulator
 # -----------------------------
+NUMBER_OF_PITS = 6
+TOTAL_PITS = 2*NUMBER_OF_PITS + 2
+STONE_PER_PIT = 4
+LEARNING_RATE= 0.0001
+
+print(f"NUMBER_OF_PITS: {NUMBER_OF_PITS}")
+print(f"TOTAL_PITS: {TOTAL_PITS}")
+print(f"STONE_PER_PIT: {STONE_PER_PIT}")
+print(f"LEARNING_RATE: {LEARNING_RATE}")
 
 class MancalaGame:
-    def __init__(self, stones_per_pit=4):
+    def __init__(self, stones_per_pit=STONE_PER_PIT):
         self.stones_per_pit = stones_per_pit
         self.reset()
 
     def reset(self):
         # Initialize the board: 6 pits per player and their Mancalas
-        self.board = [self.stones_per_pit]*6 + [0] + [self.stones_per_pit]*6 + [0]
+        self.board = [self.stones_per_pit]*NUMBER_OF_PITS + [0] + [self.stones_per_pit]*NUMBER_OF_PITS + [0]
         self.current_player = 1  # Player 1 starts
         self.game_over = False
         self.last_board_snapshot = self.board.copy()
@@ -29,18 +38,18 @@ class MancalaGame:
     def get_legal_moves(self):
         # Return indices of non-empty pits for the current player
         if self.current_player == 1:
-            return [i for i in range(6) if self.board[i] > 0]
+            return [i for i in range(NUMBER_OF_PITS) if self.board[i] > 0]
         else:
-            return [i for i in range(7, 13) if self.board[i] > 0]
+            return [i for i in range(NUMBER_OF_PITS+1,2*NUMBER_OF_PITS+1 ) if self.board[i] > 0]
 
     def make_move(self, pit_index):
         stones = self.board[pit_index]
         self.board[pit_index] = 0
         index = pit_index
         while stones > 0:
-            index = (index + 1) % 14
+            index = (index + 1) % TOTAL_PITS
             # Skip opponent's Mancala
-            if (self.current_player == 1 and index == 13) or (self.current_player == 2 and index == 6):
+            if (self.current_player == 1 and index == TOTAL_PITS-1) or (self.current_player == 2 and index == NUMBER_OF_PITS):
                 continue
             self.board[index] += 1
             stones -= 1
@@ -51,44 +60,44 @@ class MancalaGame:
         return self.get_state(), self.game_over
 
     def handle_capture(self, index):
-        if self.current_player == 1 and 0 <= index <= 5 and self.board[index] == 1:
-            opposite_index = 12 - index
+        if self.current_player == 1 and 0 <= index <= (NUMBER_OF_PITS-1) and self.board[index] == 1:
+            opposite_index = TOTAL_PITS-2 - index
             if self.board[opposite_index] > 0:
-                self.board[6] += self.board[opposite_index] + 1
+                self.board[NUMBER_OF_PITS] += self.board[opposite_index] + 1
                 self.board[index] = 0 # TODO: Make this our own version where we don't capture the last stone
                 self.board[opposite_index] = 0
-        elif self.current_player == 2 and 7 <= index <= 12 and self.board[index] == 1:
-            opposite_index = 12 - index
+        elif self.current_player == 2 and (NUMBER_OF_PITS+1) <= index <= (2*NUMBER_OF_PITS) and self.board[index] == 1:
+            opposite_index = TOTAL_PITS-2 - index
             if self.board[opposite_index] > 0:
-                self.board[13] += self.board[opposite_index] + 1
+                self.board[TOTAL_PITS-1] += self.board[opposite_index] + 1
                 self.board[index] = 0
                 self.board[opposite_index] = 0
 
     def is_extra_turn(self, index):
-        return (self.current_player == 1 and index == 6) or (self.current_player == 2 and index == 13)
+        return (self.current_player == 1 and index == NUMBER_OF_PITS) or (self.current_player == 2 and index == TOTAL_PITS-1)
 
     def update_last_board_snapshot(self):
         self.last_board_snapshot = self.board.copy()
 
     def check_game_over(self):
-        if sum(self.board[0:6]) == 0 or sum(self.board[7:13]) == 0:
+        if sum(self.board[0:NUMBER_OF_PITS]) == 0 or sum(self.board[(NUMBER_OF_PITS+1):TOTAL_PITS-1]) == 0:
             self.game_over = True
             self.collect_remaining_stones()
             return True
         return False
 
     def collect_remaining_stones(self):
-        self.board[6] += sum(self.board[0:6])
-        self.board[13] += sum(self.board[7:13])
-        for i in range(14):
-            if i != 6 and i != 13:
+        self.board[NUMBER_OF_PITS] += sum(self.board[0:NUMBER_OF_PITS])
+        self.board[TOTAL_PITS-1] += sum(self.board[(NUMBER_OF_PITS+1):TOTAL_PITS-1])
+        for i in range(TOTAL_PITS):
+            if i != NUMBER_OF_PITS and i != TOTAL_PITS-1:
                 self.board[i] = 0
 
     def check_winner(self):
         if self.game_over:
-            if self.board[6] > self.board[13]:
+            if self.board[NUMBER_OF_PITS] > self.board[TOTAL_PITS-1]:
                 return 1
-            elif self.board[6] < self.board[13]:
+            elif self.board[NUMBER_OF_PITS] < self.board[TOTAL_PITS-1]:
                 return 2
             else:
                 return 0
@@ -155,14 +164,14 @@ class DQN(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.out(x)
 class RLAgent(Player):
-    def __init__(self, action_size=6):
-        self.state_size = 14 + 1  # Board state + current player
+    def __init__(self, action_size=NUMBER_OF_PITS):
+        self.state_size = TOTAL_PITS + 1  # Board state + current player
         self.action_size = action_size
         self.policy_net = DQN(self.state_size, self.action_size)
         self.target_net = DQN(self.state_size, self.action_size)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.00002)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=LEARNING_RATE)
         self.memory = ReplayMemory()
         self.steps_done = 0
         self.epsilon = 1.0  # Exploration rate TODO: make this higher eg 10 to start with more exploration
@@ -188,8 +197,8 @@ class RLAgent(Player):
                 q_values = self.policy_net(state)
                 q_values_np = q_values.detach().numpy()
                 # Mask illegal moves
-                q_values_np = [q_values_np[i%6] if i in legal_moves else -float('inf') for i in range(6)]
-                action = legal_moves[np.argmax([q_values_np[i%6] for i in legal_moves])]
+                q_values_np = [q_values_np[i%NUMBER_OF_PITS] if i in legal_moves else -float('inf') for i in range(NUMBER_OF_PITS)]
+                action = legal_moves[np.argmax([q_values_np[i%NUMBER_OF_PITS] for i in legal_moves])]
         return action
 
     def optimize_model(self, batch_size=32):
@@ -198,11 +207,11 @@ class RLAgent(Player):
         transitions = self.memory.sample(batch_size)
         batch = Transition(*zip(*transitions))
 
-        state_batch = torch.FloatTensor(batch.state)
-        action_batch = torch.LongTensor(batch.action).unsqueeze(1)
-        reward_batch = torch.FloatTensor(batch.reward)
-        next_state_batch = torch.FloatTensor(batch.next_state)
-        done_batch = torch.FloatTensor(batch.done)
+        state_batch = torch.FloatTensor(np.array(batch.state))
+        action_batch = torch.LongTensor(np.array(batch.action)).unsqueeze(1)
+        reward_batch = torch.FloatTensor(np.array(batch.reward))
+        next_state_batch = torch.FloatTensor(np.array(batch.next_state))
+        done_batch = torch.FloatTensor(np.array(batch.done))
 
         q_values = self.policy_net(state_batch).gather(1, action_batch)
         next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
@@ -216,7 +225,9 @@ class RLAgent(Player):
     def update_epsilon(self):
 
         new_epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-        if (self.epsilon>0.5 and new_epsilon<=0.5):
+        if (self.epsilon > 1 and new_epsilon <= 1):
+            print("Epsilon has reached 1")
+        elif (self.epsilon>0.5 and new_epsilon<=0.5):
             print("Epsilon has reached 0.5")
         elif (self.epsilon>0.3 and new_epsilon<=0.3):
             print("Epsilon has reached 0.3")
@@ -225,7 +236,11 @@ class RLAgent(Player):
         self.epsilon = new_epsilon
 
     def update_target_net(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        # self.target_net.load_state_dict(self.policy_net.state_dict())
+        # perform Soft Updates (Polyak Averaging)
+        for target_param, policy_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
+            target_param.data.copy_(0.1 * policy_param.data + 0.9 * target_param.data)
+
 
     def save_model(self, filepath="rl_agent.pth"):
         """Saves the RL agent's policy network to a file."""
@@ -261,20 +276,20 @@ class DDQN(nn.Module):
 
 class DRLAgent(RLAgent):
     # use DDQN instead of DQN
-    def __init__(self, action_size=6):
-        self.state_size = 14 + 1
+    def __init__(self, action_size=NUMBER_OF_PITS):
+        self.state_size = TOTAL_PITS + 1
         self.action_size = action_size
         self.policy_net = DDQN(self.state_size, self.action_size)
         self.target_net = DDQN(self.state_size, self.action_size)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.0001)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=LEARNING_RATE)
         self.memory = ReplayMemory()
         self.steps_done = 0
         self.epsilon = 5
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9998
-        self.gamma = 0.8
+        self.epsilon_decay = 0.9999
+        self.gamma = 0.6
         # print a message for all the constants
         print(f"state_size: {self.state_size}")
         print(f"action_size: {self.action_size}")
@@ -289,8 +304,8 @@ class DRLAgent(RLAgent):
 # -----------------------------
 def calculate_delta_reward(game, game_over, ai_player=1):
     # use game.last_board_snapshot and game.board to calculate the delta reward
-    ai_mancala = 6 if ai_player == 1 else 13
-    opponent_mancala = 13 if ai_player == 1 else 6
+    ai_mancala = NUMBER_OF_PITS if ai_player == 1 else TOTAL_PITS-1
+    opponent_mancala = TOTAL_PITS-1 if ai_player == 1 else NUMBER_OF_PITS
     if game_over:
         if game.board[ai_mancala] > game.board[opponent_mancala]:
             return 10
@@ -301,14 +316,14 @@ def calculate_delta_reward(game, game_over, ai_player=1):
     else:
         # Provide intermediate reward based on Mancala difference
         total_stones = sum(game.board)
-        assert total_stones == 48
+        assert total_stones == (2*NUMBER_OF_PITS)*STONE_PER_PIT
         delta_stones = game.board[ai_mancala] - game.last_board_snapshot[ai_mancala] + game.last_board_snapshot[opponent_mancala] - game.board[opponent_mancala]
         game.update_last_board_snapshot()
         return (delta_stones) / total_stones * 4
 
 def calculate_reward(game, game_over, ai_player=1):
-    ai_mancala = 6 if ai_player == 1 else 13
-    opponent_mancala = 13 if ai_player == 1 else 6
+    ai_mancala = NUMBER_OF_PITS if ai_player == 1 else TOTAL_PITS-1
+    opponent_mancala = TOTAL_PITS-1 if ai_player == 1 else NUMBER_OF_PITS
 
     if game_over:
         if game.board[ai_mancala] > game.board[opponent_mancala]:  # AI wins
@@ -344,15 +359,16 @@ def evaluate_win_rate(agent, num_games=10000):
         else:
             draws += 1
     win_rate = wins / num_games
-    print(f"Win Rate: {win_rate:.2%}, Draws: {draws/num_games:.2%}, Losses: {losses/num_games:.2%}")
+    print(f"Win Rate: {win_rate:.2%}, Draws: {draws/num_games:.2%}, Losses: {losses/num_games:.2%}, Total Games: {num_games}")
     return win_rate
 
 # -----------------------------
 # Training Functions
 # -----------------------------
 
-def train_rl_agent(num_episodes=10000, eval_interval=500):
-    agent = DRLAgent(action_size=6)
+def train_rl_agent(num_episodes=10000, eval_interval=20):
+    last_win_rate = 0
+    agent = RLAgent(action_size=NUMBER_OF_PITS)
     opponent = RandomPlayer()
     win_rates = []
 
@@ -382,17 +398,21 @@ def train_rl_agent(num_episodes=10000, eval_interval=500):
             print(f"Evaluating at Episode {episode + 1}...")
             win_rate = evaluate_win_rate(agent, num_games=1000)
             win_rates.append((episode + 1, win_rate))
-            if ((episode + 1) // eval_interval) % 10 == 0:
+            if win_rate < last_win_rate-0.5:
+                agent.epsilon += 0.2
+                print(f"Win rate has decreased. Reset Epsilon to {agent.epsilon}")
+            last_win_rate = win_rate
+            if ((episode + 1) // eval_interval) % 100 == 0:
                 class_name = agent.__class__.__name__
-                final_win_rate = evaluate_win_rate(agent, num_games=100000)
-                model_name = f"delta-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_epoch{episode}_winrate{final_win_rate}.pth"
+                final_win_rate = evaluate_win_rate(agent, num_games=10000)
+                model_name = f"1delta-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_epoch{episode}_winrate{final_win_rate}.pth"
                 agent.save_model(f"saved_models/{model_name}")
 
     print("Evaluating Final RL Agent...")
-    final_win_rate = evaluate_win_rate(agent, num_games=100000)
+    final_win_rate = evaluate_win_rate(agent, num_games=10000)
     # Save the model after training
     class_name = agent.__class__.__name__
-    model_name = f"delta-Final-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
+    model_name = f"1delta-Final-{class_name}_hidden{agent.policy_net.hidden_size}_epsilon{agent.epsilon:.2f}_gamma{agent.gamma}_winrate{final_win_rate}.pth"
     agent.save_model(f"saved_models/{model_name}")
     return agent, win_rates
 
