@@ -32,7 +32,7 @@ def play_game(agent1, agent2, verbose=True):
         if verbose:
             print(f"\nPlayer {game.current_player} chooses pit {action}.")
 
-        game.make_move(action)
+        game.make_move(action, player_perspective=game.current_player)
 
         if verbose:
             print_board(game)

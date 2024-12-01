@@ -42,7 +42,8 @@ class MancalaGame:
         else:
             return [i for i in range(NUMBER_OF_PITS+1,2*NUMBER_OF_PITS+1 ) if self.board[i] > 0]
 
-    def make_move(self, pit_index):
+    def make_move(self, pit_index, player_perspective):
+        assert player_perspective == self.current_player
         stones = self.board[pit_index]
         self.board[pit_index] = 0
         index = pit_index
@@ -57,7 +58,7 @@ class MancalaGame:
         self.check_game_over()
         if not self.game_over and not self.is_extra_turn(index):
             self.current_player = 2 if self.current_player == 1 else 1
-        return self.get_state(), self.game_over
+        return self.get_state(player_perspective=player_perspective), self.game_over
 
     def handle_capture(self, index):
         if self.current_player == 1 and 0 <= index <= (NUMBER_OF_PITS-1) and self.board[index] == 1:
@@ -104,7 +105,12 @@ class MancalaGame:
         else:
             raise ValueError("Game is not over yet.")
 
-    def get_state(self):
+    def get_state(self, player_perspective):
+        assert player_perspective in [1, 2]
+        if player_perspective == 2:
+            # Swap the board for player 2
+            board = self.board[(NUMBER_OF_PITS+1):TOTAL_PITS] + self.board[0:(NUMBER_OF_PITS+1)]
+            return board + [self.current_player]
         # Returns the current game state as a numpy array
         return np.array(self.board + [self.current_player])
 
@@ -164,7 +170,9 @@ class DQN(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.out(x)
 class RLAgent(Player):
-    def __init__(self, action_size=NUMBER_OF_PITS):
+    def __init__(self, position,action_size=NUMBER_OF_PITS):
+        assert position in [1, 2]
+        self.position = position
         self.state_size = TOTAL_PITS + 1  # Board state + current player
         self.action_size = action_size
         self.policy_net = DQN(self.state_size, self.action_size)
@@ -188,7 +196,7 @@ class RLAgent(Player):
 
 
     def choose_move(self, game):
-        state = torch.FloatTensor(game.get_state())
+        state = torch.FloatTensor(game.get_state(player_perspective=self.position))
         legal_moves = game.get_legal_moves()
         if random.random() < self.epsilon:
             action = random.choice(legal_moves)
@@ -349,9 +357,10 @@ def evaluate_win_rate(agent, num_games=10000):
         while not game.game_over:
             if game.current_player == 1:
                 action = agent.choose_move(game)
+                game.make_move(action,player_perspective=1)
             else:
                 action = random_player.choose_move(game)
-            game.make_move(action)
+                game.make_move(action,player_perspective=2)
         if game.check_winner() == 1:
             wins += 1
         elif game.check_winner() == 2:
@@ -374,15 +383,15 @@ def train_rl_agent(num_episodes=10000, eval_interval=20):
 
     for episode in range(num_episodes):
         game = MancalaGame()
-        state = game.get_state()
+        state = game.get_state(player_perspective=1)
         while not game.game_over:
             if game.current_player == 1:
                 action = agent.choose_move(game)
-                player = 1  # After the last line, game.current_player will change, so use player instead
+                player = 1
             else:
                 action = opponent.choose_move(game)
                 player = 2
-            next_state, game_over = game.make_move(action)
+            next_state, game_over = game.make_move(action,player_perspective=player)
             reward = calculate_delta_reward(game,game_over) #calculate_reward(game, game_over)
             done = float(game_over)
             if player == 1:  # Only store AI's transitions
