@@ -71,21 +71,23 @@ class RandomPlayer:
 
 # Callback function to be called after each generation
 def on_generation(ga_instance):
+    print("=====================================")
     global model, opponent, num_games
     solution, solution_fitness, solution_idx = ga_instance.best_solution()
     print(f"Generation {ga_instance.generations_completed}:")
-    print(f"Best Fitness: {solution_fitness:.4f}")
+    print(f"Best Fitness: {solution_fitness:.4f}, model_idx: {solution_idx}")
     # Load the best solution's weights into the model
     model_weights_dict = pygad.torchga.model_weights_as_dict(model=model, weights_vector=solution)
     model.load_state_dict(model_weights_dict)
     # Evaluate the model's performance
-    win_rate = evaluate_win_rate(model, num_games=5000)
+    win_rate = evaluate_win_rate(model, num_games=1000)
     print(f"Win Rate: {win_rate:.2%}")
     # Save the model
     model.save(f"best_model_gen_{ga_instance.generations_completed}_win_{win_rate:.4%}.pth")
-    num_games += 0.5
+    num_games += 0.1
     num_games = min(num_games, 50)
     print(f"incrementing num_games to {num_games:.1f}")
+    print("=====================================\n\n")
 
 # -----------------------------
 # Main Execution
@@ -97,7 +99,7 @@ if __name__ == "__main__":
 
     # Initialize the opponent
     opponent = RandomPlayer()
-    num_games = 5 # start with a small number, increase it as we evolve the population.
+    num_games = 20 # start with a small number, increase it as we evolve the population.
 
     # Prepare the genetic algorithm
     torch_ga = pygad.torchga.TorchGA(model=model, num_solutions=100)
@@ -113,7 +115,8 @@ if __name__ == "__main__":
         crossover_type="single_point",
         parent_selection_type="tournament",
         keep_parents=2,
-        on_generation=on_generation  # The callback function
+        on_generation=on_generation,  # The callback function
+        parallel_processing=3
     )
     ga_instance.run()
 
